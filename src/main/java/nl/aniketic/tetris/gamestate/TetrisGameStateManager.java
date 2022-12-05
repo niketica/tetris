@@ -2,6 +2,7 @@ package nl.aniketic.tetris.gamestate;
 
 import nl.aniketic.engine.display.DisplayManager;
 import nl.aniketic.engine.gamestate.GameStateManager;
+import nl.aniketic.engine.sound.Sound;
 import nl.aniketic.tetris.controls.Key;
 import nl.aniketic.tetris.controls.TetrisKeyHandler;
 import nl.aniketic.tetris.tetromino.BlockGameObject;
@@ -45,6 +46,10 @@ public class TetrisGameStateManager extends GameStateManager {
 
     private BlockGameObject[][] landedBlocks;
 
+    private Sound landingSound;
+    private Sound clearSound;
+    private Sound failSound;
+
     @Override
     protected void startGameState() {
         random = new Random();
@@ -52,6 +57,10 @@ public class TetrisGameStateManager extends GameStateManager {
 
         DisplayManager.createDisplay("TETRIS");
         DisplayManager.addKeyListener(tetrisKeyHandler);
+
+        landingSound = new Sound("/sound/land.wav");
+        clearSound = new Sound("/sound/clear.wav");
+        failSound = new Sound("/sound/fail.wav");
 
         startNewGame();
     }
@@ -124,6 +133,7 @@ public class TetrisGameStateManager extends GameStateManager {
         checkRowClear();
 
         if (landed) {
+            playSound(landingSound);
             currentTetromino.setActive(false);
             previousTetrominos.add(currentTetromino);
 
@@ -137,6 +147,11 @@ public class TetrisGameStateManager extends GameStateManager {
         }
     }
 
+    private void playSound(Sound sound) {
+        sound.loadClip();
+        sound.play();
+    }
+
     public void checkRowClear() {
 
         for (int row=MAX_ROW - 1; row>=0; row--) {
@@ -146,6 +161,7 @@ public class TetrisGameStateManager extends GameStateManager {
                 boolean rowClear = isRowClear(row);
                 if (rowClear) {
                     System.out.println("ROW CLEAR!");
+                    playSound(clearSound);
 
                     for (int col=0; col<MAX_COL; col++) {
                         landedBlocks[col][row].deactivatePanelComponent();
@@ -203,6 +219,7 @@ public class TetrisGameStateManager extends GameStateManager {
         }
 
         if (isCollision(currentTetromino, 0, 0)) {
+            playSound(failSound);
             cleanupGame();
             startNewGame();
         } else {
