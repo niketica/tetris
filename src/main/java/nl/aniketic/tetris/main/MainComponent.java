@@ -5,7 +5,7 @@ import nl.aniketic.tetris.gamestate.TetrisGameStateManager;
 public class MainComponent {
 
     public static void main(String[] args) {
-        new TetrisGameStateManager().startGame();
+        TetrisGameStateManager tetrisGameStateManager = new TetrisGameStateManager();
+        tetrisGameStateManager.startGame();
     }
-
 }

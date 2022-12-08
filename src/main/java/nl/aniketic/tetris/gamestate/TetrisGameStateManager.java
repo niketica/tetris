@@ -5,46 +5,46 @@ import nl.aniketic.engine.gamestate.GameStateManager;
 import nl.aniketic.engine.sound.Sound;
 import nl.aniketic.tetris.controls.Key;
 import nl.aniketic.tetris.controls.TetrisKeyHandler;
-import nl.aniketic.tetris.tetromino.BlockGameObject;
-import nl.aniketic.tetris.tetromino.Tetromino;
-import nl.aniketic.tetris.tetromino.TetrominoI;
-import nl.aniketic.tetris.tetromino.TetrominoL;
-import nl.aniketic.tetris.tetromino.TetrominoO;
-import nl.aniketic.tetris.tetromino.TetrominoS;
-import nl.aniketic.tetris.tetromino.TetrominoT;
-import nl.aniketic.tetris.userinterface.GameBox;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Random;
 
 public class TetrisGameStateManager extends GameStateManager {
 
-    private static final int MAX_COL = 10;
-    private static final int MAX_ROW = 20;
-    private static final int GAME_BOX_WIDTH = BlockGameObject.SIZE * 10;
-    private static final int GAME_BOX_HEIGHT = BlockGameObject.SIZE * 20;
+    private static final int SCORE_CLEAR_ROW = 100;
+    private static final int SCORE_MOVE_DOWN_USER_INPUT = 1;
+    private static final Map<Integer, Integer> LEVEL_SCORE_MAP = new HashMap<>() {{
+        put(1,  1_500);
+        put(2,  3_000);
+        put(3,  4_500);
+        put(4,  6_000);
+        put(5,  7_500);
+        put(6,  9_000);
+        put(7, 10_500);
+        put(8, 12_000);
+    }};
 
-    private final GameBox mainGameBox = new GameBox(40, 40, GAME_BOX_WIDTH, GAME_BOX_HEIGHT);
-    private final GameBox nextGameBox = new GameBox(40 + GAME_BOX_WIDTH + 40, 40, 100, 100);
+    private int[][] landed;
 
-    private Tetromino currentTetromino;
     private Tetromino nextTetromino;
+    private Tetromino currentTetromino;
+
+    private int blockFallCount;
+    private int currentBlockFallCount;
+
+    private int userInputCount = 10;
+    private int currentUserInputCount;
+
+    private MainPanel mainPanel;
+    private SidePanel sidePanel;
+
     private Random random;
 
-    protected int horizontalInputCooldown = 10;
-    protected int horizontalInputCount = horizontalInputCooldown;
-
-    protected int verticalInputCooldown = 40;
-    protected int verticalInputCount = verticalInputCooldown;
-
-    protected int updatePositionCooldown = 10;
-    protected int currentPositionCooldown = updatePositionCooldown;
-
-    private List<Tetromino> previousTetrominos;
-
-    private BlockGameObject[][] landedBlocks;
+    private boolean gameOver;
+    private int score;
+    private int level;
 
     private Sound landingSound;
     private Sound clearSound;
@@ -53,10 +53,8 @@ public class TetrisGameStateManager extends GameStateManager {
     @Override
     protected void startGameState() {
         random = new Random();
-        TetrisKeyHandler tetrisKeyHandler = new TetrisKeyHandler();
-
         DisplayManager.createDisplay("TETRIS");
-        DisplayManager.addKeyListener(tetrisKeyHandler);
+        DisplayManager.addKeyListener(new TetrisKeyHandler());
 
         landingSound = new Sound("/sound/land.wav");
         clearSound = new Sound("/sound/clear.wav");
@@ -66,84 +64,309 @@ public class TetrisGameStateManager extends GameStateManager {
     }
 
     private void startNewGame() {
-        gameObjects.add(mainGameBox);
-        mainGameBox.activatePanelComponent();
+        gameOver = false;
+        blockFallCount = 30;
+        currentBlockFallCount = 0;
+        currentUserInputCount = userInputCount;
+        score = 0;
+        level = 1;
 
-        gameObjects.add(nextGameBox);
-        nextGameBox.activatePanelComponent();
+        landed = createNewGamePanel();
+        printGamePanel();
 
-        verticalInputCount = 0;
-        landedBlocks = new BlockGameObject[MAX_COL][MAX_ROW];
-        previousTetrominos = new ArrayList<>();
-        nextTetromino = createNextTetromino();
-        setCurrentTetromino();
+        mainPanel = new MainPanel();
+        mainPanel.setLanded(landed);
+
+        sidePanel = new SidePanel();
+
+        createNextTetromino();
+        setNewTetromino();
+
+        gameObjects.add(mainPanel);
+        gameObjects.add(sidePanel);
+    }
+
+    private void setNewTetromino() {
+        currentTetromino = nextTetromino;
+        mainPanel.setCurrent(currentTetromino);
+        createNextTetromino();
+
+        if (isCollision(currentTetromino.getShape(), currentTetromino.getTopLeftCol(),
+                currentTetromino.getTopLeftRow())) {
+            gameOver = true;
+        }
+    }
+
+    private void createNextTetromino() {
+        TetrominoShape tetrominoShape =
+                (TetrominoShape) Arrays.stream(TetrominoShape.values()).toArray()[random.nextInt(
+                        TetrominoShape.values().length)];
+        nextTetromino = new Tetromino(
+                tetrominoShape, landed[0].length / 2 - 1, 0
+        );
+        sidePanel.setNextTetromino(nextTetromino);
+    }
+
+    private void addTetrominoToGamePanel(Tetromino tetromino) {
+        playSound(landingSound);
+        int[][] tetrominoShape = tetromino.getShape();
+        for (int row = 0; row < tetrominoShape.length; row++) {
+            for (int col = 0; col < tetrominoShape[0].length; col++) {
+                int value = tetrominoShape[row][col];
+                if (value > 0) {
+                    landed[tetromino.getTopLeftRow() + row][tetromino.getTopLeftCol() + col] = value;
+                }
+            }
+        }
+    }
+
+    private void clearRows() {
+        for (int row = landed.length - 1; row >= 0; row--) {
+            clearRow(row);
+        }
+    }
+
+    private void clearRow(int row) {
+        boolean clearRow = true;
+        for (int col = 0; col < landed[0].length; col++) {
+            int value = landed[row][col];
+            if (value == 0) {
+                clearRow = false;
+                break;
+            }
+        }
+
+        if (clearRow) {
+            for (int i = row; i >= 0; i--) {
+                for (int col = 0; col < landed[0].length; col++) {
+                    if (i > 0) {
+                        landed[i][col] = landed[i - 1][col];
+                    } else {
+                        landed[i][col] = 0;
+                    }
+                }
+            }
+            setScore(score + SCORE_CLEAR_ROW);
+            playSound(clearSound);
+            clearRow(row);
+        }
+    }
+
+    private int[][] createNewGamePanel() {
+        return new int[][]{
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+                {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
+        };
+    }
+
+    private void printGamePanel() {
+        System.out.println("NUMBER OF COL=" + landed[0].length);
+        System.out.println("NUMBER OF ROW=" + landed.length);
+        for (int row = 0; row < landed.length; row++) {
+            for (int col = 0; col < landed[row].length; col++) {
+                System.out.print("[" + landed[row][col] + "]");
+            }
+            System.out.println();
+        }
     }
 
     @Override
     protected void updatePreGameState() {
-        if (horizontalInputCount >= horizontalInputCooldown) {
-            horizontalInputCount = 0;
-            if (Key.LEFT.isPressed() && !currentTetromino.hitLeftSide(0)) {
-                if (!isCollision(currentTetromino, -1, 0)) {
-                    currentTetromino.moveLeft();
-                }
-            } else if (Key.RIGHT.isPressed() && !currentTetromino.hitRightSide(MAX_COL - 1)) {
-                if (!isCollision(currentTetromino, 1, 0)) {
-                    currentTetromino.moveRight();
+        if (gameOver) {
+            Key pressedKey = getPressedKey();
+            if (pressedKey != null && pressedKey.isPressed() && pressedKey == Key.ROTATE) {
+                mainPanel.deactivatePanelComponent();
+                sidePanel.deactivatePanelComponent();
+                startNewGame();
+            }
+        } else {
+            updateGame();
+        }
+    }
+
+    private void updateGame() {
+        if (currentBlockFallCount >= blockFallCount) {
+            currentBlockFallCount = 0;
+            moveDown();
+        } else {
+            currentBlockFallCount++;
+        }
+
+        if (currentUserInputCount >= userInputCount) {
+            Key pressedKey = getPressedKey();
+
+            if (pressedKey != null) {
+                currentUserInputCount = 0;
+                System.out.println("Pressed: " + pressedKey);
+
+                switch (pressedKey) {
+                    case LEFT:
+                        moveLeft();
+                        break;
+                    case RIGHT:
+                        moveRight();
+                        break;
+                    case DOWN:
+                        moveDown();
+                        setScore(score + SCORE_MOVE_DOWN_USER_INPUT);
+                        break;
+                    case ROTATE:
+                        rotate();
+                        break;
+                    default:
+                        System.out.println("Unhandled key input.");
                 }
             }
         } else {
-            horizontalInputCount++;
+            currentUserInputCount++;
         }
 
-        if (Key.DOWN.isPressed() && !currentTetromino.hitBottom(MAX_ROW - 1)) {
-            if (!isCollision(currentTetromino, 0, 1)) {
-                currentTetromino.moveDown();
-            }
+        if (gameOver) {
+            playSound(failSound);
+            sidePanel.setGameOver(gameOver);
         }
+    }
 
-        boolean landed = false;
-        if (verticalInputCount >= verticalInputCooldown && !currentTetromino.hitBottom(MAX_ROW - 1)) {
-            if (!isCollision(currentTetromino, 0, 1)) {
-                currentTetromino.moveDown();
-            } else {
-                landed = true;
-            }
-            verticalInputCount = 0;
+    private void moveLeft() {
+        int potentialTopLeftCol = currentTetromino.getTopLeftCol() - 1;
+        if (!isOutOfBounds(currentTetromino.getShape(), potentialTopLeftCol, currentTetromino.getTopLeftRow())
+                && !isCollision(currentTetromino.getShape(), potentialTopLeftCol, currentTetromino.getTopLeftRow())) {
+            currentTetromino.setTopLeftCol(currentTetromino.getTopLeftCol() - 1);
+        }
+    }
+
+    private void moveRight() {
+        int potentialTopLeftCol = currentTetromino.getTopLeftCol() + 1;
+        System.out.println("potentialTopLeftCol=" + potentialTopLeftCol);
+        if (!isOutOfBounds(currentTetromino.getShape(), potentialTopLeftCol, currentTetromino.getTopLeftRow())
+                && !isCollision(currentTetromino.getShape(), potentialTopLeftCol, currentTetromino.getTopLeftRow())) {
+            int topLeftCol = currentTetromino.getTopLeftCol() + 1;
+            currentTetromino.setTopLeftCol(topLeftCol);
+        }
+    }
+
+    private void moveDown() {
+        int potentialTopLeftRow = currentTetromino.getTopLeftRow() + 1;
+        if (isLanded(currentTetromino.getShape(), potentialTopLeftRow)) {
+            addTetrominoToGamePanel(currentTetromino);
+            clearRows();
+            setNewTetromino();
+        } else if (isCollision(currentTetromino.getShape(), currentTetromino.getTopLeftCol(), potentialTopLeftRow)) {
+            addTetrominoToGamePanel(currentTetromino);
+            clearRows();
+            setNewTetromino();
         } else {
-            verticalInputCount++;
+            currentTetromino.setTopLeftRow(potentialTopLeftRow);
         }
+    }
 
-        if (Key.ROTATE.isPressed() && currentPositionCooldown >= updatePositionCooldown) {
-            currentPositionCooldown = 0;
-            currentTetromino.rotate();
-        } else if (currentPositionCooldown < updatePositionCooldown) {
-            currentPositionCooldown++;
-        }
+    private void rotate() {
+        int[][] potentialShape = currentTetromino.rotate();
 
-        if (!landed) {
-            if (currentTetromino.hitBottom(MAX_ROW - 1)) {
-                landed = true;
+        if (isOutOfBounds(potentialShape, currentTetromino.getTopLeftCol(), currentTetromino.getTopLeftRow())
+                || isCollision(potentialShape, currentTetromino.getTopLeftCol(), currentTetromino.getTopLeftRow())) {
+            int topLeftColOffsetRight = currentTetromino.getTopLeftCol() + 1;
+            if (isOutOfBounds(potentialShape, topLeftColOffsetRight, currentTetromino.getTopLeftRow())
+                    || isCollision(potentialShape, topLeftColOffsetRight, currentTetromino.getTopLeftRow())) {
+                int topLeftColOffsetLeft = currentTetromino.getTopLeftCol() - 1;
+                if (!isOutOfBounds(potentialShape, topLeftColOffsetLeft, currentTetromino.getTopLeftRow())
+                        && !isCollision(potentialShape, topLeftColOffsetLeft, currentTetromino.getTopLeftRow())) {
+                    currentTetromino.setTopLeftCol(topLeftColOffsetLeft);
+                    currentTetromino.setShape(potentialShape);
+                }
             } else {
-                landed = previousTetrominos.stream()
-                        .anyMatch(previousTetromino -> currentTetromino.overlap(previousTetromino));
+                currentTetromino.setTopLeftCol(topLeftColOffsetRight);
+                currentTetromino.setShape(potentialShape);
+            }
+        } else {
+            currentTetromino.setShape(potentialShape);
+        }
+    }
+
+    private boolean isLanded(int[][] shape, int topLeftRow) {
+        for (int row = shape.length - 1; row >= 0; row--) {
+            for (int col = 0; col < shape[0].length; col++) {
+                int shapeValue = shape[row][col];
+                if (shapeValue > 0) {
+                    int currentRow = topLeftRow + row;
+                    if (currentRow >= landed.length) {
+                        return true;
+                    }
+                }
             }
         }
 
-        checkRowClear();
+        return false;
+    }
 
-        if (landed) {
-            playSound(landingSound);
-            currentTetromino.setActive(false);
-            previousTetrominos.add(currentTetromino);
-
-            for (BlockGameObject block : currentTetromino.getBlocks()) {
-                int col = block.getCol();
-                int row = block.getRow();
-                landedBlocks[col][row] = block;
+    private boolean isOutOfBounds(int[][] shape, int topLeftCol, int topLeftRow) {
+        for (int row = 0; row < shape.length; row++) {
+            for (int col = 0; col < shape[0].length; col++) {
+                int shapeValue = shape[row][col];
+                if (shapeValue > 0) {
+                    int currentCol = topLeftCol + col;
+                    int currentRow = topLeftRow + row;
+                    if (currentRow < 0 || currentRow >= landed.length || currentCol < 0 ||
+                            currentCol >= landed[0].length) {
+                        return true;
+                    }
+                }
             }
+        }
+        return false;
+    }
 
-            setCurrentTetromino();
+    private boolean isCollision(int[][] shape, int topLeftCol, int topLeftRow) {
+        for (int row = 0; row < shape.length; row++) {
+            for (int col = 0; col < shape[0].length; col++) {
+                int shapeValue = shape[row][col];
+                if (shapeValue > 0) {
+                    int landedValue = landed[row + topLeftRow][col + topLeftCol];
+                    if (landedValue > 0) {
+                        // Other block occupies this space
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private Key getPressedKey() {
+        for (Key key : Key.values()) {
+            if (key.isPressed()) {
+                return key;
+            }
+        }
+        return null;
+    }
+
+    public void setScore(int score) {
+        this.score = score;
+        sidePanel.setScore(score);
+        setLevel();
+    }
+
+    public void setLevel() {
+        Integer levelMaxScore = LEVEL_SCORE_MAP.get(level);
+        if (levelMaxScore != null && score >= levelMaxScore) {
+            level++;
+            sidePanel.setLevel(level);
+            blockFallCount -= 2;
         }
     }
 
@@ -152,129 +375,8 @@ public class TetrisGameStateManager extends GameStateManager {
         sound.play();
     }
 
-    public void checkRowClear() {
-
-        for (int row=MAX_ROW - 1; row>=0; row--) {
-            boolean checkCurrentRow = true;
-
-            while (checkCurrentRow) {
-                boolean rowClear = isRowClear(row);
-                if (rowClear) {
-                    System.out.println("ROW CLEAR!");
-                    playSound(clearSound);
-
-                    for (int col=0; col<MAX_COL; col++) {
-                        landedBlocks[col][row].deactivatePanelComponent();
-                    }
-
-                    for (int row2=row - 1; row2>0; row2--) {
-                        moveRowDown(row2);
-                    }
-
-                } else {
-                    checkCurrentRow = false;
-                }
-            }
-        }
-    }
-
-    private boolean isRowClear(int row) {
-        for (int col=0; col<MAX_COL; col++) {
-            if (landedBlocks[col][row] == null) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private void moveRowDown(int row) {
-        System.out.println("Move row " + row + " down to row " + (row + 1));
-        for (int col=0; col<MAX_COL; col++) {
-
-            BlockGameObject block = landedBlocks[col][row];
-            if (block != null) {
-                block.setGridPosition(
-                        block.getCol(),
-                        block.getRow() + 1
-                );
-            }
-
-            landedBlocks[col][row + 1] = landedBlocks[col][row];
-        }
-    }
-
     @Override
     protected void updateEndGameState() {
 
     }
-
-    private void setCurrentTetromino() {
-        currentTetromino = nextTetromino;
-
-        currentTetromino.setScreenOffSet(mainGameBox.getScreenX(), mainGameBox.getScreenY());
-
-        currentTetromino.setGridPosition(5, -3);
-        while (Arrays.stream(currentTetromino.getBlocks()).anyMatch(block -> block.getRow() < 0)) {
-            currentTetromino.moveDown();
-        }
-
-        if (isCollision(currentTetromino, 0, 0)) {
-            playSound(failSound);
-            cleanupGame();
-            startNewGame();
-        } else {
-            currentTetromino.setActive(true);
-            nextTetromino = createNextTetromino();
-        }
-    }
-
-    private void cleanupGame() {
-        DisplayManager.clearGamePanel();
-    }
-
-    private Tetromino createNextTetromino() {
-        Tetromino tetromino = createRandomTetromino();
-
-        tetromino.setScreenOffSet(nextGameBox.getScreenX(), nextGameBox.getScreenY());
-        tetromino.setGridPosition(1, 1);
-
-        gameObjects.add(tetromino);
-        tetromino.activatePanelComponent();
-        tetromino.setActive(false);
-        return tetromino;
-    }
-
-    private Tetromino createRandomTetromino() {
-        switch (random.nextInt(5)) {
-            case 0:
-                return new TetrominoI();
-            case 1:
-                return new TetrominoL();
-            case 2:
-                return new TetrominoO();
-            case 3:
-                return new TetrominoS();
-            case 4:
-                return new TetrominoT();
-            default:
-                throw new IllegalStateException("Unhandled item");
-        }
-    }
-
-    private boolean isCollision(Tetromino tetromino, int offsetCol, int offsetRow) {
-
-        for (BlockGameObject block : tetromino.getBlocks()) {
-            int col = block.getCol() + offsetCol;
-            int row = block.getRow() + offsetRow;
-
-            if (col >= 0 && col < MAX_COL && row >= 0 && row < MAX_ROW) {
-                if (landedBlocks[col][row] != null) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
 }
